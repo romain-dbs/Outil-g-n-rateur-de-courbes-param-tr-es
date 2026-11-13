@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Courbes paramétrées</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#fafaf7;--card:#fff;--fg:#1d1d1b;--mut:#6b6b66;--line:#dcdcd4;--grid:#ececE4;--axis:#9a9a92;--acc:#c2410c;--pt:#1d4ed8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#161615;--card:#201f1e;--fg:#ecebe6;--mut:#a09f98;--line:#383735;--grid:#2a2928;--axis:#6f6e68;--acc:#fb923c;--pt:#60a5fa}}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+label{display:flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace}
+input[type=text]{flex:1;min-width:180px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;font-family:ui-monospace,Menlo,monospace}
+input[type=number]{width:92px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+button{padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);cursor:pointer;font:inherit}
+button:hover{border-color:var(--acc)}
+button.main{background:var(--acc);color:#fff;border-color:var(--acc)}
+canvas{width:100%;height:min(70vw,520px);display:block;background:var(--card);border:1px solid var(--line);border-radius:12px}
+.err{color:#dc2626;min-height:1.4em;font-size:.9rem}
+.mut{color:var(--mut);font-size:.85rem}
+input[type=range]{flex:1;min-width:160px}
+</style>
+</head>
+<body>
+<main>
+<h1>Courbes paramétrées M(t) = (x(t), y(t))</h1>
+<div class="card">
+  <div class="row"><label>x(t) =</label><input type="text" id="fx" value="tan(t)" spellcheck="false"></div>
+  <div class="row"><label>y(t) =</label><input type="text" id="fy" value="cos(t)**2" spellcheck="false"></div>
+  <div class="row">
+    <label>t min <input type="number" id="t0" value="-1.5707" step="any"></label>
+    <label>t max <input type="number" id="t1" value="1.5707" step="any"></label>
+    <button class="main" id="go">Tracer</button>
+    <button id="tau">t ∈ [0, 2π]</button>
+  </div>
+  <div class="row" id="presets"></div>
+  <div class="err" id="err"></div>
+  <div class="mut">Fonctions : sin, cos, tan, exp, ln, sqrt, abs, atan… Constantes : pi, e. Puissance : ^ ou **. Écris le produit avec * ou colle le nombre à la fonction (2t, 3cos(t) acceptés).</div>
+</div>
+<canvas id="cv"></canvas>
+<div class="card" style="margin-top:12px">
+  <div class="row"><label>t = <span id="tv">0</span></label><input type="range" id="ts" min="0" max="1000" value="0"><button id="play">▶ Animer</button></div>
+  <div class="mut" id="pos"></div>
+</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');
+let pts=[],T0=0,T1=1,fxf,fyf,view=null;
+
+const PRESETS=[
+ ['Lissajous','cos(3*t)','sin(2*t)',0,2*Math.PI],
+ ['Sorcière d\'Agnesi','tan(t)','cos(t)^2',-1.5707,1.5707],
+ ['Cercle','cos(t)','sin(t)',0,2*Math.PI],
+ ['Cardioïde','(1-cos(t))*cos(t)','(1-cos(t))*sin(t)',0,2*Math.PI],
+ ['Astroïde','cos(t)^3','sin(t)^3',0,2*Math.PI],
+ ['Cycloïde','t-sin(t)','1-cos(t)',0,4*Math.PI],
+ ['Spirale','t*cos(t)','t*sin(t)',0,6*Math.PI],
+ ['Folium','3*t/(1+t^3)','3*t^2/(1+t^3)',-0.6,20],
+ ['Hypocycloïde','2*cos(t)+cos(2*t)','2*sin(t)-sin(2*t)',0,2*Math.PI]
+];
+PRESETS.forEach(p=>{const b=document.createElement('button');b.textContent=p[0];b.onclick=()=>{$('fx').value=p[1];$('fy').value=p[2];$('t0').value=+p[3].toFixed(4);$('t1').value=+p[4].toFixed(4);draw()};$('presets').appendChild(b)});
+
+function compile(s){
+  let e=s.trim().replace(/\^/g,'**').replace(/π/g,'pi').replace(/\bln\b/g,'log')
+   .replace(/\bpi\b/gi,'PI').replace(/\be\b/g,'E')
+   .replace(/(\d)\s*(?=[a-zA-Z(])/g,(m,d,off,str)=>/[eE]\d?$/.test(str.slice(0,off+1))&&/^\d+e[+-]?\d/i.test(str.slice(off-0))?d:d+'*')
+   .replace(/\)\s*(?=[a-zA-Z(\d])/g,')*');
+  if(!e)throw new Error('expression vide');
+  return new Function('t','with(Math){return ('+e+')}');
+}
+function resize(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0)}
+function nice(v){const p=10**Math.floor(Math.log10(v)),m=v/p;return (m<1.5?1:m<3.5?2:m<7.5?5:10)*p}
+
+function draw(){
+  $('err').textContent='';
+  try{
+    fxf=compile($('fx').value);fyf=compile($('fy').value);
+    T0=parseFloat($('t0').value);T1=parseFloat($('t1').value);
+    if(!isFinite(T0)||!isFinite(T1)||T1<=T0)throw new Error('il faut t min < t max');
+    const N=2000;pts=[];
+    for(let i=0;i<=N;i++){const t=T0+(T1-T0)*i/N;let x=fxf(t),y=fyf(t);pts.push(isFinite(x)&&isFinite(y)&&Math.abs(x)<1e6&&Math.abs(y)<1e6?[x,y]:null)}
+    if(!pts.some(p=>p))throw new Error('aucun point défini sur cet intervalle');
+  }catch(e){$('err').textContent='Erreur : '+e.message;return}
+  render();
+}
+function render(){
+  resize();
+  const W=cv.getBoundingClientRect().width,H=cv.getBoundingClientRect().height;
+  const css=getComputedStyle(document.documentElement);
+  const v=pts.filter(Boolean);
+  const xs=v.map(p=>p[0]),ys=v.map(p=>p[1]);
+  let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
+  const q=(a,f)=>{const s=a.slice().sort((m,n)=>m-n);return s[Math.floor(f*(s.length-1))]};
+  const rob=(a,lo,hi)=>{const l=q(a,.02),h=q(a,.98),m=(h-l)*0.1||1;return hi-lo>12*(h-l+1e-9)?[l-m,h+m]:[lo,hi]};
+  [xmin,xmax]=rob(xs,xmin,xmax);[ymin,ymax]=rob(ys,ymin,ymax);
+  xmin=Math.min(xmin,0);xmax=Math.max(xmax,0);ymin=Math.min(ymin,0);ymax=Math.max(ymax,0);
+  let dx=(xmax-xmin)||1,dy=(ymax-ymin)||1;
+  const pad=30,s=Math.min((W-2*pad)/dx,(H-2*pad)/dy);
+  const ox=(W-s*dx)/2-s*xmin,oy=(H+s*dy)/2+s*ymin;
+  const X=x=>ox+s*x,Y=y=>oy-s*y;
+  view={X,Y};
+  ctx.clearRect(0,0,W,H);
+  const step=nice(40/s);
+  const gx0=Math.floor((-ox)/s/step)*step,gx1=(W-ox)/s,gy0=Math.floor((oy-H)/s/step)*step,gy1=oy/s;
+  ctx.lineWidth=1;ctx.font='11px system-ui';ctx.fillStyle=css.getPropertyValue('--mut');
+  for(let x=gx0;x<=gx1;x+=step){ctx.strokeStyle=css.getPropertyValue('--grid');ctx.beginPath();ctx.moveTo(X(x),0);ctx.lineTo(X(x),H);ctx.stroke();if(Math.abs(x)>1e-9)ctx.fillText(+x.toPrecision(3),X(x)+2,Math.min(Math.max(Y(0)+12,12),H-3))}
+  for(let y=gy0;y<=gy1;y+=step){ctx.strokeStyle=css.getPropertyValue('--grid');ctx.beginPath();ctx.moveTo(0,Y(y));ctx.lineTo(W,Y(y));ctx.stroke();if(Math.abs(y)>1e-9)ctx.fillText(+y.toPrecision(3),Math.min(Math.max(X(0)+3,3),W-30),Y(y)-3)}
+  ctx.strokeStyle=css.getPropertyValue('--axis');ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(0,Y(0));ctx.lineTo(W,Y(0));ctx.moveTo(X(0),0);ctx.lineTo(X(0),H);ctx.stroke();
+  ctx.strokeStyle=css.getPropertyValue('--acc');ctx.lineWidth=2.2;ctx.lineJoin='round';
+  ctx.beginPath();let pen=false;
+  let px=0,py=0;for(const p of pts){if(!p){pen=false;continue}const a=X(p[0]),b=Y(p[1]);if(pen&&Math.hypot(a-px,b-py)>0.6*Math.max(W,H))pen=false;pen?ctx.lineTo(a,b):ctx.moveTo(a,b);pen=true;px=a;py=b}
+  ctx.stroke();
+  marker();
+}
+function marker(){
+  const f=$('ts').value/1000,t=T0+(T1-T0)*f;
+  $('tv').textContent=t.toFixed(3);
+  let x,y;try{x=fxf(t);y=fyf(t)}catch(e){return}
+  if(!isFinite(x)||!isFinite(y)){$('pos').textContent='non défini en ce t';return}
+  $('pos').textContent=`M(t) = (${x.toFixed(4)} ; ${y.toFixed(4)})`;
+  const css=getComputedStyle(document.documentElement);
+  ctx.fillStyle=css.getPropertyValue('--pt');ctx.beginPath();ctx.arc(view.X(x),view.Y(y),6,0,7);ctx.fill();
+}
+let anim=null;
+$('ts').oninput=()=>{render()};
+$('play').onclick=()=>{
+  if(anim){cancelAnimationFrame(anim);anim=null;$('play').textContent='▶ Animer';return}
+  $('play').textContent='⏸ Pause';
+  const loop=()=>{let v=+$('ts').value+4;if(v>1000)v=0;$('ts').value=v;render();anim=requestAnimationFrame(loop)};
+  loop();
+};
+$('go').onclick=draw;
+$('tau').onclick=()=>{$('t0').value=0;$('t1').value=6.2832;draw()};
+['fx','fy','t0','t1'].forEach(i=>$(i).addEventListener('keydown',e=>{if(e.key==='Enter')draw()}));
+addEventListener('resize',()=>{if(pts.length)render()});
+draw();
+</script>
+</body>
+</html>
